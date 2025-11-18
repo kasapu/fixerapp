@@ -1,0 +1,916 @@
+// ServiceHub Database Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+enum UserRole {
+  CUSTOMER
+  PROFESSIONAL
+  ADMIN
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  phone             String?   @unique
+  passwordHash      String
+  role              UserRole  @default(CUSTOMER)
+  emailVerified     Boolean   @default(false)
+  emailVerifiedAt   DateTime?
+  phoneVerified     Boolean   @default(false)
+  phoneVerifiedAt   DateTime?
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  lastLoginAt       DateTime?
+
+  // Relations
+  customerProfile      CustomerProfile?
+  professionalProfile  ProfessionalProfile?
+  sessions             Session[]
+  notifications        Notification[]
+  sentMessages         Message[]
+  conversations        ConversationParticipant[]
+  reviewsGiven         Review[]              @relation("ReviewGiver")
+  reviewsReceived      Review[]              @relation("ReviewReceiver")
+  favoritesByCustomers FavoriteProfessional[]
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  sessionToken String   @unique
+  accessToken  String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  id         String   @id @default(cuid())
+  identifier String // email or phone
+  token      String   @unique
+  type       String // email_verification, phone_verification, password_reset
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+
+  @@unique([identifier, token])
+  @@index([token])
+  @@map("verification_tokens")
+}
+
+// ============================================
+// CUSTOMER PROFILE
+// ============================================
+
+model CustomerProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  firstName      String
+  lastName       String
+  profilePicture String?
+  addressLine1   String?
+  addressLine2   String?
+  city           String?
+  state          String?
+  zipCode        String?
+  country        String?   @default("US")
+  latitude       Float?
+  longitude      Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentMethods       PaymentMethod[]
+  serviceRequests      ServiceRequest[]
+  bookings             Booking[]              @relation("CustomerBookings")
+  favoriteProfessionals FavoriteProfessional[]
+
+  @@index([userId])
+  @@index([zipCode])
+  @@map("customer_profiles")
+}
+
+model FavoriteProfessional {
+  id              String   @id @default(cuid())
+  customerId      String
+  professionalId  String
+  createdAt       DateTime @default(now())
+
+  customer     CustomerProfile      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  professional User                 @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, professionalId])
+  @@index([customerId])
+  @@index([professionalId])
+  @@map("favorite_professionals")
+}
+
+// ============================================
+// PROFESSIONAL PROFILE
+// ============================================
+
+enum BusinessType {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum SubscriptionTier {
+  BASIC
+  PRO
+  PREMIUM
+}
+
+model ProfessionalProfile {
+  id                String           @id @default(cuid())
+  userId            String           @unique
+  businessName      String
+  businessType      BusinessType     @default(INDIVIDUAL)
+  bio               String?          @db.Text
+  profilePicture    String?
+  coverPhoto        String?
+  taxId             String?
+  serviceRadius     Int?             // in miles
+  basedCity         String?
+  basedState        String?
+  basedZipCode      String?
+  latitude          Float?
+  longitude         Float?
+  subscriptionTier  SubscriptionTier @default(BASIC)
+  subscriptionStart DateTime?
+  subscriptionEnd   DateTime?
+  rating            Float            @default(0.0)
+  reviewCount       Int              @default(0)
+  completionRate    Float            @default(0.0)
+  responseTimeMin   Int              @default(0) // average response time in minutes
+  joinedAt          DateTime         @default(now())
+  verifiedAt        DateTime?
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relations
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services          ProfessionalService[]
+  serviceAreas      ServiceArea[]
+  portfolio         PortfolioItem[]
+  availability      Availability[]
+  certifications    Certification[]
+  insurance         InsuranceInfo?
+  backgroundCheck   BackgroundCheck?
+  bankAccount       BankAccount?
+  quotes            Quote[]
+  bookings          Booking[]           @relation("ProfessionalBookings")
+
+  @@index([userId])
+  @@index([rating])
+  @@index([basedZipCode])
+  @@index([subscriptionTier])
+  @@index([isActive])
+  @@map("professional_profiles")
+}
+
+model ServiceArea {
+  id              String   @id @default(cuid())
+  professionalId  String
+  city            String?
+  state           String?
+  zipCode         String?
+  radiusMiles     Int?
+  createdAt       DateTime @default(now())
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@index([zipCode])
+  @@map("service_areas")
+}
+
+model PortfolioItem {
+  id              String   @id @default(cuid())
+  professionalId  String
+  title           String
+  description     String?  @db.Text
+  imageUrl        String
+  orderIndex      Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@map("portfolio_items")
+}
+
+model Availability {
+  id              String   @id @default(cuid())
+  professionalId  String
+  dayOfWeek       Int // 0-6 (Sunday-Saturday)
+  startTime       String // HH:mm format
+  endTime         String // HH:mm format
+  isAvailable     Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@map("availability")
+}
+
+model Certification {
+  id              String            @id @default(cuid())
+  professionalId  String
+  title           String
+  issuingOrg      String
+  issueDate       DateTime?
+  expiryDate      DateTime?
+  credentialId    String?
+  documentUrl     String?
+  status          VerificationStatus @default(PENDING)
+  createdAt       DateTime          @default(now())
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@map("certifications")
+}
+
+model InsuranceInfo {
+  id              String            @id @default(cuid())
+  professionalId  String            @unique
+  provider        String
+  policyNumber    String
+  coverageAmount  Float
+  expiryDate      DateTime
+  documentUrl     String?
+  status          VerificationStatus @default(PENDING)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@map("insurance_info")
+}
+
+model BackgroundCheck {
+  id              String            @id @default(cuid())
+  professionalId  String            @unique
+  provider        String            @default("Checkr")
+  checkrId        String?
+  status          VerificationStatus
+  completedAt     DateTime?
+  expiresAt       DateTime?
+  reportUrl       String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@map("background_checks")
+}
+
+model BankAccount {
+  id                 String   @id @default(cuid())
+  professionalId     String   @unique
+  stripeAccountId    String   @unique
+  accountHolderName  String?
+  last4              String?
+  bankName           String?
+  routingNumber      String?
+  accountStatus      String   @default("pending") // pending, verified, failed
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId])
+  @@index([stripeAccountId])
+  @@map("bank_accounts")
+}
+
+// ============================================
+// SERVICE CATEGORIES & SERVICES
+// ============================================
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?  @db.Text
+  icon        String?
+  parentId    String?
+  orderIndex  Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Self-referential relationship for subcategories
+  parent           Category?        @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  subcategories    Category[]       @relation("CategoryHierarchy")
+  services         Service[]
+  serviceRequests  ServiceRequest[]
+
+  @@index([slug])
+  @@index([parentId])
+  @@map("categories")
+}
+
+model Service {
+  id               String   @id @default(cuid())
+  categoryId       String
+  name             String
+  description      String?  @db.Text
+  priceMin         Float?
+  priceMax         Float?
+  priceUnit        String?  // per_hour, per_job, per_sqft, etc.
+  typicalDuration  Int?     // in minutes
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  category             Category              @relation(fields: [categoryId], references: [id])
+  professionalServices ProfessionalService[]
+  serviceRequests      ServiceRequest[]
+
+  @@index([categoryId])
+  @@map("services")
+}
+
+model ProfessionalService {
+  id              String   @id @default(cuid())
+  professionalId  String
+  serviceId       String
+  customPrice     Float?
+  customPriceUnit String?
+  description     String?  @db.Text
+  createdAt       DateTime @default(now())
+
+  professional ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  service      Service              @relation(fields: [serviceId], references: [id])
+
+  @@unique([professionalId, serviceId])
+  @@index([professionalId])
+  @@index([serviceId])
+  @@map("professional_services")
+}
+
+// ============================================
+// SERVICE REQUESTS & QUOTES
+// ============================================
+
+enum RequestStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum RequestUrgency {
+  ASAP
+  THIS_WEEK
+  THIS_MONTH
+  FLEXIBLE
+}
+
+enum DeliveryMethod {
+  INSTANT_MATCH
+  BROWSE_QUOTES
+  DIRECT_CONTACT
+}
+
+model ServiceRequest {
+  id                String         @id @default(cuid())
+  customerId        String
+  categoryId        String
+  serviceId         String?
+  title             String
+  description       String         @db.Text
+  questionsAnswered Json?          // Store Q&A as JSON
+  photos            String[]       // Array of photo URLs
+  addressLine1      String
+  addressLine2      String?
+  city              String
+  state             String
+  zipCode           String
+  latitude          Float?
+  longitude         Float?
+  budgetMin         Float?
+  budgetMax         Float?
+  urgency           RequestUrgency @default(FLEXIBLE)
+  preferredDates    DateTime[]
+  status            RequestStatus  @default(OPEN)
+  deliveryMethod    DeliveryMethod @default(BROWSE_QUOTES)
+  expiresAt         DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  // Relations
+  customer      CustomerProfile @relation(fields: [customerId], references: [id])
+  category      Category        @relation(fields: [categoryId], references: [id])
+  service       Service?        @relation(fields: [serviceId], references: [id])
+  quotes        Quote[]
+  selectedQuote Quote?          @relation("SelectedQuote", fields: [selectedQuoteId], references: [id])
+  selectedQuoteId String?       @unique
+  booking       Booking?
+
+  @@index([customerId])
+  @@index([categoryId])
+  @@index([serviceId])
+  @@index([status])
+  @@index([zipCode])
+  @@index([createdAt])
+  @@map("service_requests")
+}
+
+enum QuoteStatus {
+  PENDING
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+model Quote {
+  id                 String      @id @default(cuid())
+  requestId          String
+  professionalId     String
+  status             QuoteStatus @default(PENDING)
+  lineItems          Json        // Array of {description, amount, quantity}
+  totalAmount        Float
+  estimatedDuration  Json?       // {value: number, unit: string}
+  startDate          DateTime?
+  endDate            DateTime?
+  terms              String?     @db.Text
+  notes              String?     @db.Text
+  validUntil         DateTime
+  createdAt          DateTime    @default(now())
+  viewedAt           DateTime?
+  respondedAt        DateTime?
+  updatedAt          DateTime    @updatedAt
+
+  // Relations
+  request           ServiceRequest  @relation(fields: [requestId], references: [id])
+  professional      ProfessionalProfile @relation(fields: [professionalId], references: [id])
+  selectedByRequest ServiceRequest? @relation("SelectedQuote")
+  booking           Booking?
+
+  @@index([requestId])
+  @@index([professionalId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("quotes")
+}
+
+// ============================================
+// BOOKINGS & JOBS
+// ============================================
+
+enum BookingStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  REFUNDED
+  FAILED
+}
+
+enum CancelledBy {
+  CUSTOMER
+  PROFESSIONAL
+  ADMIN
+}
+
+model Booking {
+  id                   String          @id @default(cuid())
+  requestId            String          @unique
+  quoteId              String          @unique
+  customerId           String
+  professionalId       String
+  status               BookingStatus   @default(SCHEDULED)
+  scheduledDate        DateTime
+  completedDate        DateTime?
+  amount               Float
+  platformFee          Float
+  professionalEarnings Float
+  tipAmount            Float           @default(0)
+  paymentStatus        PaymentStatus   @default(PENDING)
+  stripePaymentIntentId String?        @unique
+  cancellationPolicy   Json?
+  cancellationReason   String?
+  cancelledBy          CancelledBy?
+  cancelledAt          DateTime?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  // Relations
+  request      ServiceRequest      @relation(fields: [requestId], references: [id])
+  quote        Quote               @relation(fields: [quoteId], references: [id])
+  customer     CustomerProfile     @relation("CustomerBookings", fields: [customerId], references: [id])
+  professional ProfessionalProfile @relation("ProfessionalBookings", fields: [professionalId], references: [id])
+  payments     Payment[]
+  reviews      Review[]
+  conversations Conversation[]
+
+  @@index([customerId])
+  @@index([professionalId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@index([stripePaymentIntentId])
+  @@map("bookings")
+}
+
+// ============================================
+// MESSAGING
+// ============================================
+
+model Conversation {
+  id            String   @id @default(cuid())
+  bookingId     String?
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  booking      Booking?                  @relation(fields: [bookingId], references: [id])
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([bookingId])
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  lastReadAt     DateTime?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([conversationId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  LOCATION
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  senderId       String
+  messageType    MessageType @default(TEXT)
+  content        String      @db.Text
+  attachments    Json?       // Array of {url, type, name, size}
+  readBy         Json?       // {userId: timestamp}
+  createdAt      DateTime    @default(now())
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  updatedAt      DateTime    @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+// ============================================
+// REVIEWS & RATINGS
+// ============================================
+
+enum ReviewType {
+  CUSTOMER_TO_PROFESSIONAL
+  PROFESSIONAL_TO_CUSTOMER
+}
+
+model Review {
+  id               String     @id @default(cuid())
+  bookingId        String
+  reviewerId       String
+  revieweeId       String
+  reviewType       ReviewType
+  overallRating    Int // 1-5
+  professionalism  Int? // 1-5
+  quality          Int? // 1-5
+  value            Int? // 1-5
+  punctuality      Int? // 1-5
+  title            String?
+  comment          String?    @db.Text
+  photos           String[]
+  response         String?    @db.Text
+  respondedAt      DateTime?
+  helpfulCount     Int        @default(0)
+  verifiedPurchase Boolean    @default(true)
+  isPublic         Boolean    @default(true)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  booking  Booking @relation(fields: [bookingId], references: [id])
+  reviewer User    @relation("ReviewGiver", fields: [reviewerId], references: [id])
+  reviewee User    @relation("ReviewReceiver", fields: [revieweeId], references: [id])
+
+  @@unique([bookingId, reviewType])
+  @@index([bookingId])
+  @@index([reviewerId])
+  @@index([revieweeId])
+  @@index([overallRating])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+// ============================================
+// PAYMENTS & PAYOUTS
+// ============================================
+
+model Payment {
+  id                       String        @id @default(cuid())
+  bookingId                String
+  customerId               String
+  professionalId           String
+  stripePaymentIntentId    String        @unique
+  stripeChargeId           String?
+  amount                   Float
+  platformFee              Float
+  professionalEarnings     Float
+  tipAmount                Float         @default(0)
+  status                   PaymentStatus @default(PENDING)
+  capturedAt               DateTime?
+  refundedAt               DateTime?
+  refundAmount             Float?
+  refundReason             String?
+  failureCode              String?
+  failureMessage           String?
+  createdAt                DateTime      @default(now())
+  updatedAt                DateTime      @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id])
+  payouts Payout[]
+
+  @@index([bookingId])
+  @@index([stripePaymentIntentId])
+  @@index([customerId])
+  @@index([professionalId])
+  @@index([status])
+  @@map("payments")
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model Payout {
+  id                 String        @id @default(cuid())
+  professionalId     String
+  stripePayoutId     String?       @unique
+  amount             Float
+  status             PayoutStatus  @default(PENDING)
+  paymentIds         String[]      // Array of payment IDs included
+  failureCode        String?
+  failureMessage     String?
+  estimatedArrival   DateTime?
+  createdAt          DateTime      @default(now())
+  paidAt             DateTime?
+  updatedAt          DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@index([professionalId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payouts")
+}
+
+model PaymentMethod {
+  id                  String   @id @default(cuid())
+  customerId          String
+  stripePaymentMethodId String @unique
+  type                String // card, bank_account
+  last4               String
+  brand               String? // visa, mastercard, etc.
+  expiryMonth         Int?
+  expiryYear          Int?
+  isDefault           Boolean  @default(false)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  customer CustomerProfile @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([stripePaymentMethodId])
+  @@map("payment_methods")
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+enum NotificationType {
+  NEW_REQUEST
+  NEW_QUOTE
+  QUOTE_ACCEPTED
+  QUOTE_DECLINED
+  BOOKING_CONFIRMED
+  BOOKING_CANCELLED
+  BOOKING_COMPLETED
+  NEW_MESSAGE
+  NEW_REVIEW
+  PAYMENT_RECEIVED
+  PAYOUT_COMPLETED
+  REMINDER
+  SYSTEM
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String           @db.Text
+  data      Json?
+  read      Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============================================
+// REFERRALS & PROMOTIONS
+// ============================================
+
+model ReferralCode {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  referrerId     String
+  referrerType   String // customer, professional
+  uses           Int      @default(0)
+  maxUses        Int?
+  creditAmount   Float    @default(20.0)
+  expiresAt      DateTime?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  redemptions ReferralRedemption[]
+
+  @@index([code])
+  @@index([referrerId])
+  @@map("referral_codes")
+}
+
+model ReferralRedemption {
+  id             String   @id @default(cuid())
+  referralCodeId String
+  refereeId      String
+  creditIssued   Float
+  redeemedAt     DateTime @default(now())
+
+  referralCode ReferralCode @relation(fields: [referralCodeId], references: [id])
+
+  @@index([referralCodeId])
+  @@index([refereeId])
+  @@map("referral_redemptions")
+}
+
+// ============================================
+// ADMIN & MODERATION
+// ============================================
+
+enum DisputeStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+model Dispute {
+  id              String        @id @default(cuid())
+  bookingId       String
+  initiatorId     String
+  respondentId    String
+  reason          String
+  description     String        @db.Text
+  evidence        Json? // URLs, documents
+  status          DisputeStatus @default(OPEN)
+  resolution      String?       @db.Text
+  resolvedBy      String?
+  resolvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([bookingId])
+  @@index([status])
+  @@map("disputes")
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id          String         @id @default(cuid())
+  userId      String
+  subject     String
+  description String         @db.Text
+  category    String
+  priority    TicketPriority @default(MEDIUM)
+  status      TicketStatus   @default(OPEN)
+  assignedTo  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([priority])
+  @@map("support_tickets")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  changes    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
